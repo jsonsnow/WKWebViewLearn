@@ -179,7 +179,7 @@ func setDocumentCooike(cooikeName:String?) -> Void {
                 }
             }
         }
-        
+        self.webView.evaluateJavaScript(JSCookieStr, completionHandler: nil)
     }
 
 ```
@@ -194,9 +194,37 @@ func setDocumentCooike(cooikeName:String?) -> Void {
 也可以由客户端来解决，客户端加载一个本地空的文档，但是地址指向a，因为是本地空文档，会立马调用finsh这个回调，这样就可以设置上去了
 
 ```
-self.webView loadHtmlString:"" baseUr:"http:a.com"
+self.webView loadHtmlString:"" baseUrl:"http:a.com"
 ```
 这个方法我是随意写的，大概如此。
+
+
+#### js与native交互
+
+以WK为例，交互舍弃了UIWeb基于JSContext这一套机制，JSContext方案给用户的权限太大，很容易被注入js对象，而WK通过WKUserContentController这个对象完成与js交互。
+
+##### js to native
+WKUserContentController必须进行注册，注册过程需要传入一个遵循WKScriptMessageHandler协议的对象，与方法名。
+
+```
+  let bridge = WKUserContentController.init()
+  js.add(WKScriptMessageHandler, name: "test")
+      
+```
+WKUserContentController 会对遵循协议的对象进行强持有
+
+```
+js.removeScriptMessageHandler(forName: "test")
+```
+
+###### natvie to js
+因为是原生调用js限制没有js调原生大，可以注入js代码并调用（如上面设置cookie的），也可以直接调用js有的函数
+
+```
+self.webView.evaluateJavaScript(JSCookieStr, completionHandler: nil)
+      
+```
+#### WebViewJavascriptBridge 原理介绍
 
 
 
