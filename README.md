@@ -333,8 +333,9 @@ js端调用callhandler的时候，会把handlerName和data保存到sendMessageQu
 }
 
 ```
+上述方法分处理native调用js，js给的回调，和js调用native两部分
 
-先分析处理js调用部分，也就是上述else部分
+先分析处理js调用native部分，也就是上述else部分
 else部分也分两步来看待，处理回调和调用native，关于调用native部分
 ```
  WVJBHandler handler = self.messageHandlers[message[@"handlerName"]];
@@ -369,6 +370,9 @@ responseCallback = ^(id ignoreResponseData) {
                     // Do nothing
                 };
 ```
+
+如果存在responseId:说明该方法是native调用js后，js处理完给的回调。通过responseId找到保存在responseCallbacks中的callback。
+
 
 ##### native调用js
 
@@ -413,6 +417,9 @@ function _dispatchMessageFromObjC(messageJSON) {
 		}
 	}
 ```
+
+可以看出与native端处理逻辑差不多。
+上面还是蛮绕的，callbackId,reponseId,直接的互相替换。总的来说就是两端的responseId和callbackid是互相对应的，存在responseId的时候说明都是对端函数处理完成后的回调，通过responseId找到对应的handler。
 
                 
 
