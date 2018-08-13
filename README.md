@@ -224,7 +224,201 @@ js.removeScriptMessageHandler(forName: "test")
 self.webView.evaluateJavaScript(JSCookieStr, completionHandler: nil)
       
 ```
+
+____
+
 #### WebViewJavascriptBridge 原理介绍
+WebViewJavascriptBridge 面向上层的类为WebViewJavascriptBridge和WKWebViewJavascriptBridge，分别对应UIWebView和WKWebView,WebViewJavascriptBridgeBase为native核心处理逻辑，为两个上层类服务。WebViewJavascriptBridge_JS为js端处理逻辑。
+
+##### js端到native端实现分析
+
+##### js端代码为
+
+```
+function callHandler(handlerName, data, responseCallback) {
+		if (arguments.length == 2 && typeof data == 'function') {
+			responseCallback = data;
+			data = null;
+		}
+		_doSend({ handlerName:handlerName, data:data }, responseCallback);
+	}
+	
+	function _doSend(message, responseCallback) {
+		if (responseCallback) {
+			var callbackId = 'cb_'+(uniqueId++)+'_'+new Date().getTime();
+			responseCallbacks[callbackId] = responseCallback;
+			message['callbackId'] = callbackId;
+		}
+		sendMessageQueue.push(message);
+		messagingIframe.src = CUSTOM_PROTOCOL_SCHEME + '://' + QUEUE_HAS_MESSAGE;
+	}
+	
+```
+
+##### native 进行对应方法的注册，来处理js端的调用
+
+```
+- (void)registerHandler:(NSString *)handlerName handler:(WVJBHandler)handler {
+    _base.messageHandlers[handlerName] = [handler copy];
+}
+```
+
+js端调用callhandler的时候，会把handlerName和data保存到sendMessageQueue这个数组中，如果有回调，生成一个callback一并同前两个信息保存到sendMessageQueue中，通过messagingIframe.src = CUSTOM_PROTOCOL_SCHEME + '://' + QUEUE_HAS_MESSAGE;通知native端，js发起了原生调用请求。
+
+
+##### native收到js端调用
+
+
+```
+- (void)WKFlushMessageQueue {
+    [_webView evaluateJavaScript:[_base webViewJavascriptFetchQueyCommand] completionHandler:^(NSString* result, NSError* error) {
+        if (error != nil) {
+            NSLog(@"WebViewJavascriptBridge: WARNING: Error when trying to fetch data from WKWebView: %@", error);
+        }
+        [_base flushMessageQueue:result];
+    }];
+}
+```
+
+改方法会拉取保存在js端sendMessageQueue中的信息，信息通过flushMessageQueue方法进行处理
+
+```
+- (void)flushMessageQueue:(NSString *)messageQueueString{
+    if (messageQueueString == nil || messageQueueString.length == 0) {
+        NSLog(@"WebViewJavascriptBridge: WARNING: ObjC got nil while fetching the message queue JSON from webview. This can happen if the WebViewJavascriptBridge JS is not currently present in the webview, e.g if the webview just loaded a new page.");
+        return;
+    }
+
+    id messages = [self _deserializeMessageJSON:messageQueueString];
+    for (WVJBMessage* message in messages) {
+        if (![message isKindOfClass:[WVJBMessage class]]) {
+            NSLog(@"WebViewJavascriptBridge: WARNING: Invalid %@ received: %@", [message class], message);
+            continue;
+        }
+        [self _log:@"RCVD" json:message];
+        
+        NSString* responseId = message[@"responseId"];
+        if (responseId) {
+            WVJBResponseCallback responseCallback = _responseCallbacks[responseId];
+            responseCallback(message[@"responseData"]);
+            [self.responseCallbacks removeObjectForKey:responseId];
+        } else {
+            WVJBResponseCallback responseCallback = NULL;
+            NSString* callbackId = message[@"callbackId"];
+            if (callbackId) {
+                responseCallback = ^(id responseData) {
+                    if (responseData == nil) {
+                        responseData = [NSNull null];
+                    }
+                    
+                    WVJBMessage* msg = @{ @"responseId":callbackId, @"responseData":responseData };
+                    [self _queueMessage:msg];
+                };
+            } else {
+                responseCallback = ^(id ignoreResponseData) {
+                    // Do nothing
+                };
+            }
+            
+            WVJBHandler handler = self.messageHandlers[message[@"handlerName"]];
+            
+            if (!handler) {
+                NSLog(@"WVJBNoHandlerException, No handler for message from JS: %@", message);
+                continue;
+            }
+            
+            handler(message[@"data"], responseCallback);
+        }
+    }
+}
+
+```
+
+先分析处理js调用部分，也就是上述else部分
+else部分也分两步来看待，处理回调和调用native，关于调用native部分
+```
+ WVJBHandler handler = self.messageHandlers[message[@"handlerName"]];
+ ```
+ message中有本次js端调用的方法名，获取方法名从messageHandlers这个字典中获取对应原生注册来处理该方法名的hander
+
+回调部分，从message中获取callbackId,如果获取到了则说明js端还希望收到原生端处理后的通知，
+
+
+```
+responseCallback = ^(id responseData) {
+        if (responseData == nil) {
+            responseData = [NSNull null];
+        }
+        WVJBMessage* msg = @{ @"responseId":callbackId, @"responseData":responseData };
+        [self _queueMessage:msg];
+};
+                
+```
+
+```
+WVJBMessage* msg = @{ @"responseId":callbackId, @"responseData":responseData };
+```
+携带了js端的callbackId，和原生传过来的信息。通过下面方法调用js端的方法，这个在后面会在native到原生详细介绍
+```
+[self _queueMessage:msg];
+```
+
+没有callbackId说明js端不需要本次调用的回调,直接如下处理
+```
+responseCallback = ^(id ignoreResponseData) {
+                    // Do nothing
+                };
+```
+
+##### native调用js
+
+逻辑和js调用native差不多，原生携带本次调用的handlerName,data（如果是回调部分则是responseId，data）,调用js端的_dispatchMessageFromObjC 函数
+
+```
+
+function _dispatchMessageFromObjC(messageJSON) {
+		if (dispatchMessagesWithTimeoutSafety) {
+			setTimeout(_doDispatchMessageFromObjC);
+		} else {
+			 _doDispatchMessageFromObjC();
+		}
+		
+		function _doDispatchMessageFromObjC() {
+			var message = JSON.parse(messageJSON);
+			var messageHandler;
+			var responseCallback;
+
+			if (message.responseId) {
+				responseCallback = responseCallbacks[message.responseId];
+				if (!responseCallback) {
+					return;
+				}
+				responseCallback(message.responseData);
+				delete responseCallbacks[message.responseId];
+			} else {
+				if (message.callbackId) {
+					var callbackResponseId = message.callbackId;
+					responseCallback = function(responseData) {
+						_doSend({ handlerName:message.handlerName, responseId:callbackResponseId, responseData:responseData });
+					};
+				}
+				
+				var handler = messageHandlers[message.handlerName];
+				if (!handler) {
+					console.log("WebViewJavascriptBridge: WARNING: no handler for message from ObjC:", message);
+				} else {
+					handler(message.data, responseCallback);
+				}
+			}
+		}
+	}
+```
+
+                
+
+       
+
+
 
 
 
