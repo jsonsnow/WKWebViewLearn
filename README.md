@@ -54,11 +54,11 @@ func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigatio
     }
 
 ```
-这个方法navigationAction中的属性：sourceFrame和targetFrame,它们分别代表action的出处和目标，类型是WKFrameInfo,WKFrameInfo有一个mainFrame属性，正是这个属性标记着这个fame是在主frame还是新开一个frame
+这个方法navigationAction中的属性：sourceFrame和targetFrame,它们分别代表action的出处和目标，类型是WKFrameInfo,WKFrameInfo有一个mainFrame属性，这个属性标识这个fame是在主frame还是新开一个frame
 
 如果targetFrame的mainFrame属性为NO,表明这个WKNaivationAction将会新开一个页面。这时候就回调用createWebView这个方法。
 
-开发者属性这个方法，返回一个新的WKWebView,让WKNavigationAction在新的webView中打开，如果你没有设置WKUIDelegate，那么WKWebVie什么事情都不会做，也就是点击按钮没反应。
+开发者实现这个方法，返回一个新的WKWebView,让WKNavigationAction在新的webView中打开，如果你没有设置WKUIDelegate，那么WKWebVie什么事情都不会做，也就是点击按钮没反应。
 
 返回的wkWebView不能和原来的WKWebView是同一个，如果返回了原来的webView,将会抛出异常。
 
@@ -69,11 +69,18 @@ func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigatio
 
 - (WKWebView *)webView:(WKWebView *)webView createWebViewWithConfiguration:(WKWebViewConfiguration *)configuration forNavigationAction:(WKNavigationAction *)navigationAction windowFeatures:(WKWindowFeatures *)windowFeatures
 {
-WKFrameInfo *frameInfo = navigationAction.targetFrame;
-if (![frameInfo isMainFrame]) {
-[webView loadRequest:navigationAction.request];
-}
-return nil;
+if navigationAction.targetFrame == nil {
+            self.urlString = navigationAction.request.url?.absoluteString
+            self.loadUrl()
+        } else {
+            if let isMain = navigationAction.targetFrame?.isMainFrame {
+                if !isMain {
+                    self.urlString = navigationAction.request.url?.absoluteString
+                    self.loadUrl()
+                }
+            }
+        }
+        return nil
 }
 
 ```
@@ -81,11 +88,9 @@ return nil;
 在网上还看到另一种方法
 
 ```
-- (void)webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction *)navigationAction decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler
-{
-  if (!navigationAction.targetFrame.isMainFrame) {
-      [webView evaluateJavaScript:@"var a = document.getElementsByTagName('a');for(var i=0;i<a.length;i++){a[i].setAttribute('target','');}" completionHandler:nil];
-  }
+- (void)webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction *)navigationAction decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler {
+  
+  	[webView evaluateJavaScript:@"var a = document.getElementsByTagName('a');for(var i=0;i<a.length;i++){a[i].setAttribute('target','');}" completionHandler:nil];
   decisionHandler(WKNavigationActionPolicyAllow);
 }
 
