@@ -70,18 +70,16 @@ func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigatio
 - (WKWebView *)webView:(WKWebView *)webView createWebViewWithConfiguration:(WKWebViewConfiguration *)configuration forNavigationAction:(WKNavigationAction *)navigationAction windowFeatures:(WKWindowFeatures *)windowFeatures
 {
 if navigationAction.targetFrame == nil {
-            self.urlString = navigationAction.request.url?.absoluteString
-            self.loadUrl()
+            self.webView.load(navigationAction.request)
         } else {
             if let isMain = navigationAction.targetFrame?.isMainFrame {
                 if !isMain {
-                    self.urlString = navigationAction.request.url?.absoluteString
-                    self.loadUrl()
+                    self.webView.load(navigationAction.request)
                 }
             }
         }
         return nil
-}
+ }
 
 ```
 
